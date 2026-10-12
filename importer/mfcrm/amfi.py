@@ -19,7 +19,7 @@ from .db import PsqlDB, SupabaseDB
 
 AMFI_URLS = ["https://portal.amfiindia.com/spages/NAVAll.txt",
              "https://www.amfiindia.com/spages/NAVAll.txt"]
-MIN_SCORE = 0.6
+MIN_SCORE = 0.75
 
 STOP = {"fund", "plan", "option", "the", "scheme", "mutual", "mf", "an", "open", "ended",
         "of", "and", "regular", "direct", "growth", "gr", "idcw", "dividend", "div",
@@ -46,6 +46,8 @@ HOUSE_ALIASES = {
 
 def norm(text):
     t = (text or "").lower().replace("&", " and ")
+    t = re.sub(r"off[\s-]*shore", "offshore", t)
+    t = re.sub(r"mid[\s-]*cap", "midcap", t)
     t = re.sub(r"[^a-z0-9 ]", " ", t)
     return re.sub(r"\s+", " ", t).strip()
 
@@ -126,33 +128,40 @@ def parse_navall(text):
     return out
 
 
-def best_match(product, schemes):
+def ranked(product, schemes, hint=None):
+    """AMFI schemes of the same fund house, plan and option, best name match first.
+    Score = shared words / all words in either name (1.0 = same words).
+    `hint` is a name to match instead (a scheme's new name); plan and option still
+    come from our own scheme name."""
     name, divopt = product["scheme_name"] or "", product.get("divopt")
     want_plan, want_opt = plan_of(name), option_of(name, divopt)
-    want_tokens = tokens(name)
+    want = tokens(hint or name)
     house = house_of(name)
-    if not want_tokens:
-        return None, 0.0
-    scored = []
+    if not want:
+        return []
+    out = []
     for s in schemes:
         if s["plan"] != want_plan or s["option"] != want_opt:
             continue
         if house and not (re.search(rf"\b{re.escape(house)}\b", s["house"])
                           or re.search(rf"\b{re.escape(house)}\b", norm(s["name"]))):
             continue
-        inter = len(want_tokens & s["tokens"])
-        if not inter:
-            continue
-        # Share of the product's words found in AMFI's name, lightly penalising extra words.
-        score = inter / len(want_tokens) - 0.05 * len(s["tokens"] - want_tokens)
-        scored.append((score, s))
-    if not scored:
-        return None, 0.0
-    scored.sort(key=lambda x: -x[0])
-    top_score, top = scored[0]
-    if len(scored) > 1 and scored[1][0] == top_score and scored[1][1]["nav"] != top["nav"]:
-        return None, top_score            # tie between different schemes: leave for review
-    return top, top_score
+        inter = len(want & s["tokens"])
+        if inter:
+            out.append((inter / len(want | s["tokens"]), s))
+    out.sort(key=lambda x: -x[0])
+    return out
+
+
+def best_match(product, schemes):
+    r = ranked(product, schemes)
+    if not r:
+        return None, 0.0, []
+    top_score, top = r[0]
+    cands = [f"{x['name']} [{x['code']}] {sc:.2f}" for sc, x in r[:3]]
+    if len(r) > 1 and r[1][0] == top_score and r[1][1]["code"] != top["code"]:
+        return None, top_score, cands     # two schemes fit equally well: leave for review
+    return top, top_score, cands
 
 
 AMFI_URLS += ["https://www.amfiindia.com/spages/NAVOpen.txt",
@@ -188,23 +197,42 @@ def run(db, text=None):
     maps, navs, unmatched = [], [], 0
     for p in products:
         key = (p["registrar"], p["product_code"])
+        cands = []
         if key in manual:
-            s = by_code.get(manual[key].get("amfi_code") or "")
+            m = manual[key]
+            s = by_code.get(m.get("amfi_code") or "")
+            if s is None and m.get("amfi_name"):
+                # A manual match given by the scheme's new name: the AMFI scheme with
+                # those words, in our plan and option.
+                r = ranked(p, schemes, hint=m["amfi_name"])
+                s = r[0][1] if r and r[0][0] >= MIN_SCORE else None
             score, method = 1.0, "manual"
+            if s is None:
+                unmatched += 1
+                print(f"manual match not found: {p['scheme_name']} -> {m.get('amfi_name')}")
+                continue
+            hint = m.get("amfi_name") if not m.get("amfi_code") else None
+            maps.append({"registrar": p["registrar"], "product_code": p["product_code"],
+                         "scheme_name": p["scheme_name"], "amfi_code": None if hint else s["code"],
+                         "amfi_name": hint or s["name"], "isin": s["isin"], "score": 1.0,
+                         "method": "manual", "candidates": f"{s['name']} [{s['code']}]"})
+            navs.append({"registrar": p["registrar"], "product_code": p["product_code"],
+                         "nav_date": s["date"], "nav": s["nav"], "isin": s["isin"], "source": "AMFI"})
+            continue
         else:
-            s, score = best_match(p, schemes)
+            s, score, cands = best_match(p, schemes)
             method = "auto"
             if s is None or score < MIN_SCORE:
                 unmatched += 1
                 maps.append({"registrar": p["registrar"], "product_code": p["product_code"],
                              "scheme_name": p["scheme_name"], "amfi_code": None, "amfi_name": None,
-                             "isin": None, "score": round(score, 3), "method": "unmatched"})
+                             "isin": None, "score": round(score, 3), "method": "unmatched",
+                             "candidates": "; ".join(cands)})
                 continue
-        if s is None:
-            continue
         maps.append({"registrar": p["registrar"], "product_code": p["product_code"],
                      "scheme_name": p["scheme_name"], "amfi_code": s["code"], "amfi_name": s["name"],
-                     "isin": s["isin"], "score": round(score, 3), "method": method})
+                     "isin": s["isin"], "score": round(score, 3), "method": method,
+                     "candidates": "; ".join(cands)})
         navs.append({"registrar": p["registrar"], "product_code": p["product_code"],
                      "nav_date": s["date"], "nav": s["nav"], "isin": s["isin"], "source": "AMFI"})
     for i in range(0, len(maps), 500):

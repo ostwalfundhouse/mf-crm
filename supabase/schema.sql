@@ -595,12 +595,25 @@ create table if not exists scheme_map (
   isin         text,
   score        numeric,
   method       text not null default 'auto',   -- auto, manual or unmatched
+  candidates   text,                            -- closest AMFI names, for review
   updated_at   timestamptz not null default now(),
   primary key (registrar, product_code)
 );
+alter table scheme_map add column if not exists candidates text;
 alter table scheme_map enable row level security;
 drop policy if exists app_read on scheme_map;
 create policy app_read on scheme_map for select using ((select public.is_app_user()));
+
+-- Latest NAV per scheme. An AMFI NAV counts only while that scheme is matched to
+-- the same AMFI scheme (same ISIN), so a corrected or removed match stops using it.
+create or replace view latest_navs as
+select distinct on (n.registrar, n.product_code) n.registrar, n.product_code, n.nav_date, n.nav
+from navs n
+where n.source is distinct from 'AMFI'
+   or exists (select 1 from scheme_map m where m.registrar = n.registrar and m.product_code = n.product_code
+              and m.method in ('auto', 'manual') and (m.isin is null or m.isin = n.isin))
+order by n.registrar, n.product_code, n.nav_date desc;
+alter view latest_navs set (security_invoker = true);
 
 -- Every scheme we hold or have transacted, with the option code where known.
 create or replace view nav_products as
@@ -614,21 +627,24 @@ where not exists (select 1 from folios f where f.registrar = t.registrar and f.p
 group by t.registrar, t.product_code;
 alter view nav_products set (security_invoker = true);
 
--- A 'manual' match is never replaced by an automatic one.
+-- A 'manual' match is never replaced by an automatic one (only its notes are refreshed).
 create or replace function upsert_scheme_map(rows jsonb) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare n int;
 begin
   insert into scheme_map as m (registrar, product_code, scheme_name, amfi_code, amfi_name, isin,
-                               score, method, updated_at)
+                               score, method, candidates, updated_at)
   select registrar, product_code, scheme_name, amfi_code, amfi_name, isin, score,
-         coalesce(method, 'auto'), now()
+         coalesce(method, 'auto'), candidates, now()
   from jsonb_populate_recordset(null::scheme_map, rows)
   on conflict (registrar, product_code) do update set
-    scheme_name = excluded.scheme_name, amfi_code = excluded.amfi_code,
-    amfi_name = excluded.amfi_name, isin = excluded.isin, score = excluded.score,
-    method = excluded.method, updated_at = now()
-  where m.method <> 'manual';
+    scheme_name = excluded.scheme_name,
+    amfi_code  = case when m.method = 'manual' then m.amfi_code  else excluded.amfi_code end,
+    amfi_name  = case when m.method = 'manual' then m.amfi_name  else excluded.amfi_name end,
+    isin       = case when m.method = 'manual' then coalesce(excluded.isin, m.isin) else excluded.isin end,
+    score      = case when m.method = 'manual' then m.score      else excluded.score end,
+    method     = case when m.method = 'manual' then m.method     else excluded.method end,
+    candidates = excluded.candidates, updated_at = now();
   get diagnostics n = row_count;
   return jsonb_build_object('upserted', n);
 end;
