@@ -25,7 +25,7 @@ STOP = {"fund", "plan", "option", "the", "scheme", "mutual", "mf", "an", "open",
         "of", "and", "regular", "direct", "growth", "gr", "idcw", "dividend", "div",
         "payout", "reinvestment", "reinvest", "income", "distribution", "cum", "capital",
         "withdrawal", "formerly", "known", "as", "erstwhile", "reg", "dir", "g", "option",
-        "options", "series", "sub", "plans", "na", "unit", "units"}
+        "options", "sub", "plans", "na", "unit", "units"}
 
 # Fund house names as they start scheme names, with words AMFI uses in its headers.
 HOUSE_ALIASES = {
@@ -48,6 +48,7 @@ def norm(text):
     t = (text or "").lower().replace("&", " and ")
     t = re.sub(r"off[\s-]*shore", "offshore", t)
     t = re.sub(r"mid[\s-]*cap", "midcap", t)
+    t = re.sub(r"\bfund of funds?\b", "fof", t)
     t = re.sub(r"[^a-z0-9 ]", " ", t)
     return re.sub(r"\s+", " ", t).strip()
 
@@ -117,6 +118,7 @@ def parse_navall(text):
         isin1, isin2 = get("isindivpayoutisingrowth"), get("isindivreinvestment")
         plan_col, opt_col = get("plan"), get("option")
         plan = ("direct" if "direct" in plan_col.lower() else "regular") if plan_col else plan_of(name)
+        explicit = bool(opt_col) or bool(re.search(r"\bgrowth\b|\bidcw\b|\bdividend\b|\bbonus\b", norm(name)))
         if opt_col:
             o = opt_col.lower()
             option = "growth" if "growth" in o else "bonus" if "bonus" in o else "idcw"
@@ -124,7 +126,7 @@ def parse_navall(text):
             option = option_of(name)
         out.append({"code": parts[c.get("schemecode", 0)], "isin": isin1 if isin1 not in ("", "-") else isin2,
                     "name": name, "nav": navf, "date": iso, "house": house,
-                    "plan": plan, "option": option, "tokens": tokens(name)})
+                    "plan": plan, "option": option, "explicit": explicit, "tokens": tokens(name)})
     return out
 
 
@@ -149,7 +151,8 @@ def ranked(product, schemes, hint=None):
         inter = len(want & s["tokens"])
         if inter:
             out.append((inter / len(want | s["tokens"]), s))
-    out.sort(key=lambda x: -x[0])
+    # Equal names: prefer the scheme whose option AMFI states outright.
+    out.sort(key=lambda x: (-x[0], not x[1].get("explicit", True)))
     return out
 
 
@@ -159,7 +162,8 @@ def best_match(product, schemes):
         return None, 0.0, []
     top_score, top = r[0]
     cands = [f"{x['name']} [{x['code']}] {sc:.2f}" for sc, x in r[:3]]
-    if len(r) > 1 and r[1][0] == top_score and r[1][1]["code"] != top["code"]:
+    if (len(r) > 1 and r[1][0] == top_score and r[1][1]["code"] != top["code"]
+            and r[1][1].get("explicit", True) == top.get("explicit", True)):
         return None, top_score, cands     # two schemes fit equally well: leave for review
     return top, top_score, cands
 

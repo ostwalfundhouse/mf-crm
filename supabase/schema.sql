@@ -611,7 +611,7 @@ select distinct on (n.registrar, n.product_code) n.registrar, n.product_code, n.
 from navs n
 where n.source is distinct from 'AMFI'
    or exists (select 1 from scheme_map m where m.registrar = n.registrar and m.product_code = n.product_code
-              and m.method in ('auto', 'manual') and (m.isin is null or m.isin = n.isin))
+              and m.method in ('auto', 'manual') and m.isin = n.isin)
 order by n.registrar, n.product_code, n.nav_date desc;
 alter view latest_navs set (security_invoker = true);
 
