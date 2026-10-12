@@ -518,7 +518,7 @@
     const msg = $("#signin-msg");
     msg.textContent = "Sending…";
     const { error } = await sb.auth.signInWithOtp({
-      email, options: { shouldCreateUser: false, emailRedirectTo: location.origin + location.pathname },
+      email, options: { emailRedirectTo: location.origin + location.pathname },
     });
     msg.textContent = error ? "The link was not sent: " + error.message
       : "Check your email for the sign-in link. You can close this tab.";
