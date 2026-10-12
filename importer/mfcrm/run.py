@@ -86,6 +86,9 @@ class Importer:
                     self._folios(folios, totals)
                     for b in _batches(R.jsonable(navs)):
                         self.db.rpc("ingest_navs", rows=b)
+                elif kind == "kfin_nav":
+                    for b in _batches(R.jsonable(R.kfin_navs(table, name))):
+                        _add(totals, {"inserted": self.db.rpc("ingest_navs", rows=b).get("upserted", 0)})
                 elif kind == "cams_txn":
                     txns, unknown = R.cams_transactions(table, name)
                     self._transactions(txns, totals)

@@ -57,6 +57,8 @@ def detect(table):
         return "cams_txn"
     if {"balance", "aum"} <= c and ({"folionumber", "folio"} & c):
         return "kfin_aum"
+    if {"productcode", "navdate", "nav"} <= c and "units" not in c and "transactiontype" not in c:
+        return "kfin_nav"
     if {"pannumber", "nominee"} <= c and ({"folio", "folionumber"} & c):
         return "kfin_master"
     if {"transactiontype", "navdate", "units"} <= c:
@@ -214,6 +216,20 @@ def kfin_aum(table, source):
     return folios, navs
 
 
+def kfin_navs(table, source):
+    """MFSD 217 NAV report: one NAV per product code and date."""
+    c = table.columns
+    out = []
+    for r in table.rows:
+        product = V.code(r.get("productcode"))
+        nav = V.number(r.get("nav"))
+        day = V.date(r.get("navdate"), True)
+        if product and nav and day:
+            out.append({"registrar": "KFIN", "product_code": product, "nav_date": day, "nav": nav,
+                        "isin": _t(r, c, "schemeisin"), "source": source})
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Transactions
 # ---------------------------------------------------------------------------
@@ -233,6 +249,24 @@ def cams_sign_from_type(trxn_type, units):
     if t.startswith("R"):
         return -1
     return None   # unknown: reported as a warning
+
+
+def cams_desc(trxn_type, sign):
+    """Plain description for a CAMS type code when the file gives none (WBR10)."""
+    t = (trxn_type or "").upper()
+    if t.startswith("SI"):
+        return "Switch / STP in"
+    if t.startswith("SO"):
+        return "Switch / STP out"
+    if t.startswith("TI"):
+        return "Transfer in"
+    if t.startswith("TO"):
+        return "Transfer out"
+    if t.startswith("P"):
+        return "Purchase"
+    if t.startswith("R") and sign:
+        return "Redemption"
+    return None
 
 
 def _with_occurrence(records):
@@ -285,7 +319,7 @@ def cams_transactions(table, source):
             "inv_name": _t(r, c, "invname"),
             "pan": V.pan(r.get("pan")) if "pan" in c else None,
             "trxn_type": ttype,
-            "trxn_desc": _t(r, c, "trxntypeflag", "trxnnature"),
+            "trxn_desc": _t(r, c, "trxntypeflag", "trxnnature") or cams_desc(ttype, sign),
             "trxn_no": tno or None,
             "trxn_mode": mode or None,
             "trxn_date": tdate,

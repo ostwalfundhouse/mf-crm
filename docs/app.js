@@ -76,18 +76,21 @@
     const [hv, clientCount, recent, imports] = await Promise.all([
       all(() => sb.from("holding_values").select("arn,registrar,amc_code,scheme_name,units,cost_value,market_value").gt("units", 0.001)),
       sb.from("clients").select("pan", { count: "exact", head: true }).gt("active_holdings", 0),
-      sb.from("transactions").select("trxn_date,inv_name,scheme_name,trxn_type,trxn_desc,amount,sign,arn,pan,folio_no,registrar")
+      sb.from("transactions_full").select("trxn_date,inv_name,scheme_name,trxn_type,trxn_desc,amount,sign,arn,pan,folio_no,registrar")
         .neq("sign", 0).order("trxn_date", { ascending: false }).limit(15),
       sb.from("import_log").select("file_name,status,finished_at,started_at").order("id", { ascending: false }).limit(1),
     ]);
-    const mv = hv.reduce((s, r) => s + (r.market_value || 0), 0);
-    const cv = hv.reduce((s, r) => s + (r.cost_value || 0), 0);
+    const valued = hv.filter((r) => r.market_value != null);
+    const mv = valued.reduce((s, r) => s + r.market_value, 0);
+    const cv = valued.reduce((s, r) => s + (r.cost_value || 0), 0);
+    const unvalued = hv.length - valued.length;
     const byArn = groupSum(hv, (r) => r.arn || "Other");
     const byAmc = groupSum(hv, (r) => amcLabel(r));
     const last = imports.data && imports.data[0];
     view.innerHTML = `
       <h1 class="page">Overview</h1>
-      <p class="sub">${last ? "Last import " + esc(new Date(last.finished_at || last.started_at).toLocaleString("en-IN")) : "No files imported yet."}</p>
+      <p class="sub">${last ? "Last import " + esc(new Date(last.finished_at || last.started_at).toLocaleString("en-IN")) : "No files imported yet."}
+        ${unvalued ? ` · ${unvalued} holdings have no NAV yet and are left out of the totals` : ""}</p>
       <div class="money">
         <div><div class="v">${short(mv)}</div><div class="l">Market value</div></div>
         <div><div class="v">${short(cv)}</div><div class="l">Cost value</div></div>
@@ -112,7 +115,7 @@
   function groupSum(rows, keyFn) {
     const m = new Map();
     rows.forEach((r) => m.set(keyFn(r), (m.get(keyFn(r)) || 0) + (r.market_value || 0)));
-    return [...m.entries()].sort((a, b) => b[1] - a[1]);
+    return [...m.entries()].filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
   }
   function bars(entries, colorFn) {
     if (!entries.length) return `<div class="empty">No holdings yet.</div>`;
@@ -122,10 +125,20 @@
         <span class="track"><span class="fill" style="display:block;width:${Math.max(1, (v / max) * 100)}%;background:${colorFn(k)}"></span></span>
         <span class="num">${short(v)}</span></div>`).join("") + `</div>`;
   }
+  // Fund house from the scheme name: known two- and three-word names first,
+  // otherwise the first word ("SBI Small Cap Fund" -> "SBI").
+  const HOUSES = ["Aditya Birla", "ICICI Prudential", "Nippon India", "Motilal Oswal", "Mirae Asset",
+    "Franklin Templeton", "Canara Robeco", "Baroda BNP", "Bank of India", "Bajaj Finserv",
+    "Mahindra Manulife", "Invesco India", "JM Financial", "Union", "The Wealth Company", "Old Bridge",
+    "White Oak", "WhiteOak Capital", "Navi", "Helios", "Edelweiss", "Quant", "PGIM India", "LIC",
+    "Tata", "Axis", "Kotak", "HDFC", "UTI", "DSP", "SBI", "Sundaram", "Bandhan", "HSBC", "Groww",
+    "Samco", "Trust", "NJ", "ITI", "Quantum", "Parag Parikh", "PPFAS", "360 ONE", "Shriram", "Zerodha"];
   function amcLabel(r) {
-    // Scheme names start with the fund house name; use the first two words.
-    const n = (r.scheme_name || r.amc_code || "Other").split(/\s+/).slice(0, 2).join(" ");
-    return n;
+    const name = (r.scheme_name || "").replace(/\s+/g, " ").trim();
+    const lower = name.toLowerCase();
+    const hit = HOUSES.find((h) => lower.startsWith(h.toLowerCase() + " ") || lower === h.toLowerCase());
+    if (hit) return hit;
+    return name.split(" ")[0] || r.amc_code || "Other";
   }
 
   async function clients(params) {
@@ -144,7 +157,7 @@
       const v = new FormData(e.target).get("q");
       location.hash = "#/clients" + (v ? "?q=" + encodeURIComponent(v) : "");
     });
-    let query = sb.from("clients").select("pan,inv_name,city,mobile,arns,active_holdings,market_value,cost_value", { count: "exact" });
+    let query = sb.from("clients").select("pan,inv_name,city,mobile,arns,active_holdings,market_value,cost_value,valued_cost,unvalued_holdings", { count: "exact" });
     if (q) {
       const like = `%${q.replace(/[%,()"\\]/g, " ").trim()}%`;
       let pans = [];
@@ -172,7 +185,7 @@
       { h: "ARN", f: (r) => (r.arns || []).filter(Boolean).map(arnTag).join(" ") },
       { h: "Holdings", num: 1, f: (r) => r.active_holdings },
       { h: "Value", num: 1, f: (r) => rs(r.market_value) },
-      { h: "Gain", num: 1, f: (r) => rs(r.market_value - r.cost_value), cls: (r) => cls(r.market_value - r.cost_value) },
+      { h: "Gain", num: 1, f: (r) => (r.valued_cost ? rs(r.market_value - r.valued_cost) : "–"), cls: (r) => cls(r.market_value - r.valued_cost) },
     ], data, { link: (r) => "#/client/" + r.pan, foot, empty: q ? "No client matches that search." : "No clients yet. Upload the investor master files first." });
   }
 
@@ -193,14 +206,16 @@
     const latest = [...fs].sort((a, b) => String(b.report_date).localeCompare(String(a.report_date)))[0];
     const folioNos = [...new Set(fs.map((f) => f.folio_no))];
     const [txns, hist] = await Promise.all([
-      all(() => sb.from("transactions").select("registrar,folio_no,product_code,scheme_name,trxn_date,trxn_type,trxn_desc,units,amount,price,sign,arn,is_reversal")
+      all(() => sb.from("transactions_full").select("registrar,folio_no,product_code,scheme_name,trxn_date,trxn_type,trxn_desc,units,amount,price,sign,arn,is_reversal")
         .in("folio_no", folioNos).order("trxn_date", { ascending: false })),
       all(() => sb.from("arn_history").select("*").in("folio_no", folioNos)),
     ]);
     const holdings = (hv.data || []).sort((a, b) => (b.market_value || 0) - (a.market_value || 0));
     const active = holdings.filter((h) => h.units > 0.001);
-    const mv = active.reduce((s, h) => s + (h.market_value || 0), 0);
-    const cv = active.reduce((s, h) => s + (h.cost_value || 0), 0);
+    const valuedH = active.filter((h) => h.market_value != null);
+    const mv = valuedH.reduce((s, h) => s + h.market_value, 0);
+    const cv = valuedH.reduce((s, h) => s + (h.cost_value || 0), 0);
+    const totalCost = active.reduce((s, h) => s + (h.cost_value || 0), 0);
     const nominees = uniq(fs.flatMap((f) => [f.nominee1_name, f.nominee2_name, f.nominee3_name]).filter(Boolean));
     const banks = uniq(fs.map((f) => [f.bank_name, f.bank_ac_no ? "A/c " + f.bank_ac_no : "", f.bank_ifsc].filter(Boolean).join(", ")).filter(Boolean));
     const famName = fam.data && fam.data.families ? fam.data.families.name : null;
@@ -210,10 +225,11 @@
       <p class="sub">${esc(pan)} · ${esc(latest.city || "")} ${famName ? `· Family: <a href="#/family/${fam.data.family_id}">${esc(famName)}</a>` : ""}</p>
       <div class="money">
         <div><div class="v">${rs(mv)}</div><div class="l">Market value</div></div>
-        <div><div class="v">${rs(cv)}</div><div class="l">Cost value</div></div>
+        <div><div class="v">${rs(totalCost)}</div><div class="l">Cost value</div></div>
         <div><div class="v ${cls(mv - cv)}">${rs(mv - cv)}</div><div class="l">Gain (${pct(mv - cv, cv)})</div></div>
         <div><div class="v">${active.length}</div><div class="l">Active holdings</div></div>
       </div>
+      ${valuedH.length < active.length ? `<p class="muted">${active.length - valuedH.length} holdings have no NAV yet; their value and gain show once a NAV file is imported.</p>` : ""}
       <h2>Details</h2>
       <dl class="facts">
         ${fact("Mobile", latest.mobile)}${fact("Email", latest.email)}${fact("Date of birth", dmy(latest.dob))}
@@ -232,27 +248,23 @@
         { h: "NAV", num: 1, f: (h) => (h.nav ? inr2.format(h.nav) + ` <span class="muted">${dmy(h.nav_date)}</span>` : "–") },
         { h: "Cost", num: 1, f: (h) => rs(h.cost_value) },
         { h: "Value", num: 1, f: (h) => rs(h.market_value) },
-        { h: "Gain", num: 1, f: (h) => rs((h.market_value || 0) - h.cost_value), cls: (h) => cls((h.market_value || 0) - h.cost_value) },
+        { h: "Gain", num: 1, f: (h) => (h.market_value == null ? "–" : rs(h.market_value - h.cost_value)), cls: (h) => (h.market_value == null ? "" : cls(h.market_value - h.cost_value)) },
       ], active, { empty: "No units held at the moment." })}
       ${holdings.length > active.length ? `<p class="muted">${holdings.length - active.length} fully redeemed folio-schemes are listed under ARN history below.</p>` : ""}
       <h2>ARN history by year</h2>
       ${arnHistoryTable(hist, fs)}
       <h2>Transactions</h2>
-      ${table([
-        { h: "Date", f: (t) => dmy(t.trxn_date) },
-        { h: "Scheme", f: (t) => esc(t.scheme_name || t.product_code) },
-        { h: "Folio", f: (t) => esc(t.folio_no) },
-        { h: "Type", f: (t) => esc(t.trxn_desc || t.trxn_type) + (t.is_reversal ? ' <span class="tag">reversal</span>' : "") },
-        { h: "Units", num: 1, f: (t) => (t.units == null ? "" : u3.format(t.units)), cls: (t) => (t.sign < 0 ? "loss" : "") },
-        { h: "Amount", num: 1, f: (t) => (t.amount == null ? "" : rs(t.amount)) },
-        { h: "ARN", f: (t) => arnTag(t.arn) },
-      ], txns.filter((t) => t.sign !== 0 || t.units), { empty: "No transactions loaded for these folios." })}
+      <div id="txns">${txnTable(txns.filter((t) => t.sign !== 0 || t.units), 100)}</div>
       <h2>Family</h2>
       <div id="family"></div>
       <h2>Notes</h2>
       <form id="note-form" class="toolbar"><textarea name="note" rows="2" placeholder="Add a note about this client" required></textarea><button>Save note</button></form>
       <div class="notes">${(notes.data || []).map((n) => `<div class="note">${esc(n.note)}<br><small>${esc(n.created_by || "")} · ${new Date(n.created_at).toLocaleString("en-IN")}</small></div>`).join("") || '<p class="muted">No notes yet.</p>'}</div>`;
 
+    const more = $("#more-txns");
+    if (more) more.addEventListener("click", () => {
+      $("#txns").innerHTML = txnTable(txns.filter((t) => t.sign !== 0 || t.units), Infinity);
+    });
     $("#note-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       const note = new FormData(e.target).get("note").trim();
@@ -262,6 +274,20 @@
       client(pan);
     });
     familyPicker(pan, fam.data);
+  }
+  function txnTable(rows, limit) {
+    const shown = rows.slice(0, limit);
+    const foot = rows.length > shown.length
+      ? `<div class="pager"><span class="muted">Showing the latest ${shown.length} of ${rows.length}</span><button class="quiet" id="more-txns">Show all</button></div>` : "";
+    return table([
+      { h: "Date", f: (t) => dmy(t.trxn_date) },
+      { h: "Scheme", f: (t) => esc(t.scheme_name || t.product_code) },
+      { h: "Folio", f: (t) => esc(t.folio_no) },
+      { h: "Type", f: (t) => esc(t.trxn_desc || t.trxn_type) + ` <span class="muted">${esc(t.trxn_type || "")}</span>` + (t.is_reversal ? ' <span class="tag">reversal</span>' : "") },
+      { h: "Units", num: 1, f: (t) => (t.units == null ? "" : u3.format(t.units)), cls: (t) => (t.sign < 0 ? "loss" : "") },
+      { h: "Amount", num: 1, f: (t) => (t.amount == null ? "" : rs(t.amount)) },
+      { h: "ARN", f: (t) => arnTag(t.arn) },
+    ], shown, { foot, empty: "No transactions loaded for these folios." });
   }
   const fact = (k, v, html) => `<div><dt>${esc(k)}</dt><dd>${html ? v || "–" : esc(v || "–")}</dd></div>`;
   const uniq = (a) => [...new Set(a.map((x) => String(x).trim()).filter(Boolean))];
@@ -325,7 +351,7 @@
     const pans = (members || []).map((m) => m.pan);
     const { data: cl } = pans.length ? await sb.from("clients").select("*").in("pan", pans) : { data: [] };
     const mv = cl.reduce((s, c) => s + (c.market_value || 0), 0);
-    const cv = cl.reduce((s, c) => s + (c.cost_value || 0), 0);
+    const cv = cl.reduce((s, c) => s + (c.valued_cost || 0), 0);
     view.innerHTML = `<h1 class="page">${esc(fam ? fam.name : "Family")}</h1><p class="sub">${cl.length} members</p>
       <div class="money"><div><div class="v">${rs(mv)}</div><div class="l">Market value</div></div>
       <div><div class="v">${rs(cv)}</div><div class="l">Cost value</div></div>
@@ -333,7 +359,7 @@
       ${table([
         { h: "Name", f: (r) => esc(r.inv_name) }, { h: "PAN", f: (r) => esc(r.pan) },
         { h: "Value", num: 1, f: (r) => rs(r.market_value) },
-        { h: "Gain", num: 1, f: (r) => rs(r.market_value - r.cost_value), cls: (r) => cls(r.market_value - r.cost_value) },
+        { h: "Gain", num: 1, f: (r) => (r.valued_cost ? rs(r.market_value - r.valued_cost) : "–"), cls: (r) => cls(r.market_value - r.valued_cost) },
       ], cl, { link: (r) => "#/client/" + r.pan })}`;
   }
 
@@ -463,6 +489,7 @@
   const REPORT_NAMES = {
     cams_master: "CAMS investor details", cams_txn: "CAMS transactions",
     kfin_master: "KFintech investor master", kfin_txn: "KFintech transactions", kfin_aum: "KFintech AUM",
+    kfin_nav: "KFintech NAV",
   };
 
   /* ---------- routing and sign-in ---------- */

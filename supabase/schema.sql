@@ -246,7 +246,8 @@ left join latest_navs n using (registrar, product_code);
 
 -- One row per client (PAN). Contact details come from the most recently
 -- reported folio.
-create or replace view clients as
+drop view if exists clients;
+create view clients as
 with ranked as (
   select f.*, row_number() over (partition by pan order by report_date desc nulls last,
                                   updated_at desc) as rn
@@ -255,7 +256,9 @@ with ranked as (
 ),
 money as (
   select pan, sum(market_value) as market_value, sum(cost_value) as cost_value,
-         count(*) filter (where units > 0.001) as active_holdings
+         sum(cost_value) filter (where market_value is not null) as valued_cost,
+         count(*) filter (where units > 0.001) as active_holdings,
+         count(*) filter (where units > 0.001 and market_value is null) as unvalued_holdings
   from holding_values group by pan
 )
 select r.pan, r.inv_name, r.dob, r.mobile, r.email, r.city, r.pincode, r.state,
@@ -265,11 +268,25 @@ select r.pan, r.inv_name, r.dob, r.mobile, r.email, r.city, r.pincode, r.state,
        coalesce(m.active_holdings, 0) as active_holdings,
        coalesce(m.market_value, 0) as market_value,
        coalesce(m.cost_value, 0) as cost_value,
+       coalesce(m.valued_cost, 0) as valued_cost,
+       coalesce(m.unvalued_holdings, 0) as unvalued_holdings,
        fm.family_id
 from ranked r
 left join money m using (pan)
 left join family_members fm using (pan)
 where r.rn = 1;
+
+-- Transactions with scheme, client and PAN filled in from the folio when the
+-- registrar file left them out (CAMS full history has no scheme or PAN column).
+create or replace view transactions_full as
+select t.id, t.registrar, t.folio_no, t.product_code, t.trxn_date, t.post_date,
+       t.trxn_type, t.trxn_desc, t.trxn_no, t.units, t.amount, t.price, t.sign,
+       t.signed_units, t.is_reversal, t.arn,
+       coalesce(nullif(t.scheme_name, ''), f.scheme_name) as scheme_name,
+       coalesce(nullif(t.inv_name, ''), f.inv_name) as inv_name,
+       coalesce(nullif(t.pan, ''), f.pan) as pan
+from transactions t
+left join folios f using (registrar, folio_no, product_code);
 
 -- Which ARN each folio and scheme was transacted under, by year.
 create or replace view arn_history as
@@ -565,3 +582,4 @@ from holdings h
 full join folios f using (registrar, folio_no, product_code)
 where f.units_reported is not null;
 alter view reconciliation set (security_invoker = true);
+alter view transactions_full set (security_invoker = true);
