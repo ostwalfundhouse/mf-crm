@@ -137,17 +137,28 @@ def best_match(product, schemes):
     return top, top_score
 
 
+AMFI_URLS += ["https://www.amfiindia.com/spages/NAVOpen.txt",
+              "https://portal.amfiindia.com/DownloadNAVHistoryReport_Po.aspx?frmdt=&todt="]
+
+
 def download():
-    last = None
+    notes = []
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                             "(KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+               "Accept": "text/plain,*/*"}
     for url in AMFI_URLS:
         try:
-            r = requests.get(url, timeout=120, headers={"User-Agent": "Mozilla/5.0 mf-crm"})
-            if r.status_code == 200 and ";" in r.text[:5000]:
-                return r.text
-            last = f"HTTP {r.status_code}"
+            r = requests.get(url, timeout=120, headers=headers)
+            text = r.text
+            n = len(parse_navall(text)) if r.status_code == 200 else 0
+            notes.append(f"{url} -> HTTP {r.status_code}, {len(text)} chars, {n} schemes, "
+                         f"starts {text[:120]!r}")
+            if n > 1000:
+                print(notes[-1])
+                return text
         except requests.RequestException as exc:
-            last = str(exc)
-    raise RuntimeError(f"Could not download AMFI NAVs: {last}")
+            notes.append(f"{url} -> {exc}")
+    raise RuntimeError("Could not download AMFI NAVs:\n" + "\n".join(notes))
 
 
 def run(db, text=None):
