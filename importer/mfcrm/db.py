@@ -6,6 +6,7 @@ GitHub Action). PsqlDB talks to a local PostgreSQL through the psql command
 """
 import json
 import os
+import re
 import subprocess
 import tempfile
 import urllib.parse
@@ -13,9 +14,30 @@ import urllib.parse
 import requests
 
 
+def project_url(url):
+    """Accept the project URL or a dashboard link and return https://<ref>.supabase.co."""
+    url = (url or "").strip().rstrip("/")
+    m = re.search(r"supabase\.com/dashboard/project/([a-z0-9]+)", url)
+    if m:
+        return f"https://{m.group(1)}.supabase.co"
+    m = re.match(r"^(https?://[^/]+)", url)
+    return m.group(1) if m else url
+
+
+def _json(r, what):
+    if r.status_code >= 300:
+        raise RuntimeError(f"{what} failed: HTTP {r.status_code} {r.text[:300]}")
+    try:
+        return r.json()
+    except ValueError:
+        raise RuntimeError(f"{what}: the reply was not data (HTTP {r.status_code}, "
+                           f"{r.headers.get('content-type')}). Check that SUPABASE_URL is the "
+                           f"project address https://<project>.supabase.co") from None
+
+
 class SupabaseDB:
     def __init__(self, url, key, bucket="inbox"):
-        self.url = url.rstrip("/")
+        self.url = project_url(url)
         self.bucket = bucket
         self.s = requests.Session()
         self.s.headers.update({"apikey": key})
@@ -26,9 +48,7 @@ class SupabaseDB:
 
     def rpc(self, name, **params):
         r = self.s.post(f"{self.url}/rest/v1/rpc/{name}", json=params, timeout=300)
-        if r.status_code >= 300:
-            raise RuntimeError(f"{name} failed: {r.status_code} {r.text[:500]}")
-        return r.json()
+        return _json(r, name)
 
     def select(self, table, query="select=*"):
         out, start, page = [], 0, 1000
@@ -36,8 +56,7 @@ class SupabaseDB:
             r = self.s.get(f"{self.url}/rest/v1/{table}?{query}",
                            headers={"Range-Unit": "items", "Range": f"{start}-{start + page - 1}"},
                            timeout=120)
-            r.raise_for_status()
-            rows = r.json()
+            rows = _json(r, f"reading {table}")
             out.extend(rows)
             if len(rows) < page:
                 return out
@@ -47,8 +66,7 @@ class SupabaseDB:
         r = self.s.post(f"{self.url}/rest/v1/import_log",
                         json={"file_name": file_name, "status": "running"},
                         headers={"Prefer": "return=representation"}, timeout=60)
-        r.raise_for_status()
-        return r.json()[0]["id"]
+        return _json(r, "writing the import log")[0]["id"]
 
     def log_finish(self, log_id, **fields):
         fields["finished_at"] = _utc_now()
@@ -60,8 +78,7 @@ class SupabaseDB:
         r = self.s.post(f"{self.url}/storage/v1/object/list/{self.bucket}",
                         json={"prefix": prefix, "limit": 1000, "offset": 0,
                               "sortBy": {"column": "name", "order": "asc"}}, timeout=60)
-        r.raise_for_status()
-        return [f"{prefix}{o['name']}" for o in r.json() if o.get("id")]
+        return [f"{prefix}{o['name']}" for o in _json(r, "listing the inbox") if o.get("id")]
 
     def download(self, path):
         r = self.s.get(f"{self.url}/storage/v1/object/{self.bucket}/{urllib.parse.quote(path)}",
