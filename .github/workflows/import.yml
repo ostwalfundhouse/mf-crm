@@ -34,6 +34,12 @@ jobs:
           MAILBACK_ZIP_PASSWORD: ${{ secrets.MAILBACK_ZIP_PASSWORD }}
           RECOMPUTE_ALL: ${{ inputs.recompute_all }}
         run: python -m mfcrm.run --inbox
+      - name: Update NAVs from AMFI
+        working-directory: importer
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python -m mfcrm.amfi
       - name: Logic checks
         working-directory: importer
         run: python -m tests.test_logic

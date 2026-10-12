@@ -582,3 +582,61 @@ full join folios f using (registrar, folio_no, product_code)
 where f.units_reported is not null;
 alter view reconciliation set (security_invoker = true);
 alter view transactions_full set (security_invoker = true);
+
+------------------------------------------------------------------------------
+-- AMFI NAVs: each registrar product code matched to an AMFI scheme
+------------------------------------------------------------------------------
+create table if not exists scheme_map (
+  registrar    text not null,
+  product_code text not null,
+  scheme_name  text,
+  amfi_code    text,
+  amfi_name    text,
+  isin         text,
+  score        numeric,
+  method       text not null default 'auto',   -- auto, manual or unmatched
+  updated_at   timestamptz not null default now(),
+  primary key (registrar, product_code)
+);
+alter table scheme_map enable row level security;
+drop policy if exists app_read on scheme_map;
+create policy app_read on scheme_map for select using ((select public.is_app_user()));
+
+-- Every scheme we hold or have transacted, with the option code where known.
+create or replace view nav_products as
+select registrar, product_code, max(scheme_name) as scheme_name,
+       max(raw ->> 'Dividend Option') as divopt
+from folios group by registrar, product_code
+union
+select t.registrar, t.product_code, max(t.scheme_name), null
+from transactions t
+where not exists (select 1 from folios f where f.registrar = t.registrar and f.product_code = t.product_code)
+group by t.registrar, t.product_code;
+alter view nav_products set (security_invoker = true);
+
+-- A 'manual' match is never replaced by an automatic one.
+create or replace function upsert_scheme_map(rows jsonb) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare n int;
+begin
+  insert into scheme_map as m (registrar, product_code, scheme_name, amfi_code, amfi_name, isin,
+                               score, method, updated_at)
+  select registrar, product_code, scheme_name, amfi_code, amfi_name, isin, score,
+         coalesce(method, 'auto'), now()
+  from jsonb_populate_recordset(null::scheme_map, rows)
+  on conflict (registrar, product_code) do update set
+    scheme_name = excluded.scheme_name, amfi_code = excluded.amfi_code,
+    amfi_name = excluded.amfi_name, isin = excluded.isin, score = excluded.score,
+    method = excluded.method, updated_at = now()
+  where m.method <> 'manual';
+  get diagnostics n = row_count;
+  return jsonb_build_object('upserted', n);
+end;
+$$;
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'anon') then
+    revoke execute on function upsert_scheme_map(jsonb) from public, anon, authenticated;
+    grant execute on function upsert_scheme_map(jsonb) to service_role;
+  end if;
+end $$;
