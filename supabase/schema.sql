@@ -246,8 +246,7 @@ left join latest_navs n using (registrar, product_code);
 
 -- One row per client (PAN). Contact details come from the most recently
 -- reported folio.
-drop view if exists clients;
-create view clients as
+create or replace view clients as
 with ranked as (
   select f.*, row_number() over (partition by pan order by report_date desc nulls last,
                                   updated_at desc) as rn
@@ -268,9 +267,9 @@ select r.pan, r.inv_name, r.dob, r.mobile, r.email, r.city, r.pincode, r.state,
        coalesce(m.active_holdings, 0) as active_holdings,
        coalesce(m.market_value, 0) as market_value,
        coalesce(m.cost_value, 0) as cost_value,
+       fm.family_id,
        coalesce(m.valued_cost, 0) as valued_cost,
-       coalesce(m.unvalued_holdings, 0) as unvalued_holdings,
-       fm.family_id
+       coalesce(m.unvalued_holdings, 0) as unvalued_holdings
 from ranked r
 left join money m using (pan)
 left join family_members fm using (pan)
