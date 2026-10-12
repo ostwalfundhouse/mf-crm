@@ -70,7 +70,10 @@ def option_of(name, divopt=None):
 
 
 def tokens(name):
-    return {w for w in norm(name).split() if w not in STOP and not re.fullmatch(r"\d+", w)}
+    n = name or ""
+    n = re.sub(r"(?i)fund(regular|direct)", r"fund \1", n)             # "FundRegular"
+    n = re.sub(r"(?i)\(?\s*(formerly|erstwhile)\b.*$", "", n)           # old names
+    return {w for w in norm(n).split() if w not in STOP and not re.fullmatch(r"\d+", w)}
 
 
 def house_of(name):
@@ -79,8 +82,10 @@ def house_of(name):
 
 
 def parse_navall(text):
-    """Return a list of AMFI schemes with code, isins, name, nav, date and fund house."""
-    out, house = [], ""
+    """Return a list of AMFI schemes with code, isin, name, plan, option, nav, date, fund house.
+    Columns are read by header name; newer files have separate Plan and Option columns."""
+    out, house, cols = [], "", None
+    months = "jan feb mar apr may jun jul aug sep oct nov dec".split()
     for line in text.splitlines():
         line = line.strip()
         if not line:
@@ -89,22 +94,35 @@ def parse_navall(text):
             if "mutual fund" in line.lower() or line.lower().endswith(" mf"):
                 house = norm(line)
             continue
-        parts = line.split(";")
-        if len(parts) < 6 or not parts[0].strip().isdigit():
+        parts = [p.strip() for p in line.split(";")]
+        if parts[0].lower() == "scheme code":
+            cols = {re.sub(r"[^a-z]", "", h.lower()): i for i, h in enumerate(parts)}
             continue
-        code, isin1, isin2, name, nav, day = [p.strip() for p in parts[:6]]
+        if not parts[0].isdigit():
+            continue
+        c = cols or {"schemecode": 0, "isindivpayoutisingrowth": 1, "isindivreinvestment": 2,
+                     "schemename": 3, "netassetvalue": 4, "date": 5}
+        get = lambda k: parts[c[k]] if k in c and c[k] < len(parts) else ""
         try:
-            navf = float(nav)
+            navf = float(get("netassetvalue"))
         except ValueError:
             continue
-        m = re.match(r"(\d{1,2})-([A-Za-z]{3})-(\d{4})", day)
+        m = re.match(r"(\d{1,2})-([A-Za-z]{3})-(\d{4})", get("date"))
         if not m:
             continue
-        months = "jan feb mar apr may jun jul aug sep oct nov dec".split()
         iso = f"{m.group(3)}-{months.index(m.group(2).lower()) + 1:02d}-{int(m.group(1)):02d}"
-        out.append({"code": code, "isin": isin1 if isin1 not in ("", "-") else isin2,
+        name = get("schemename")
+        isin1, isin2 = get("isindivpayoutisingrowth"), get("isindivreinvestment")
+        plan_col, opt_col = get("plan"), get("option")
+        plan = ("direct" if "direct" in plan_col.lower() else "regular") if plan_col else plan_of(name)
+        if opt_col:
+            o = opt_col.lower()
+            option = "growth" if "growth" in o else "bonus" if "bonus" in o else "idcw"
+        else:
+            option = option_of(name)
+        out.append({"code": parts[c.get("schemecode", 0)], "isin": isin1 if isin1 not in ("", "-") else isin2,
                     "name": name, "nav": navf, "date": iso, "house": house,
-                    "plan": plan_of(name), "option": option_of(name), "tokens": tokens(name)})
+                    "plan": plan, "option": option, "tokens": tokens(name)})
     return out
 
 
