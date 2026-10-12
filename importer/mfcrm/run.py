@@ -182,7 +182,7 @@ def main(argv=None):
             with open(f, "rb") as fh:
                 process(imp, os.path.basename(f), fh.read())
 
-    if args.recompute_all:
+    if args.recompute_all or os.environ.get("RECOMPUTE_ALL") == "true":
         for row in db.select("transactions", "select=registrar,folio_no,product_code"):
             imp.touched.add(f"{row['registrar']}|{row['folio_no']}|{row['product_code']}")
 

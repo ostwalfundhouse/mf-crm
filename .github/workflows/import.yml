@@ -3,7 +3,12 @@ name: Import mailback files
 on:
   schedule:
     - cron: "20 */2 * * *"      # every two hours
-  workflow_dispatch: {}          # "Run workflow" button for manual runs
+  workflow_dispatch:             # "Run workflow" button for manual runs
+    inputs:
+      recompute_all:
+        description: "Recalculate holdings for every folio"
+        type: boolean
+        default: false
 
 concurrency:
   group: import
@@ -27,6 +32,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           MAILBACK_ZIP_PASSWORD: ${{ secrets.MAILBACK_ZIP_PASSWORD }}
+          RECOMPUTE_ALL: ${{ inputs.recompute_all }}
         run: python -m mfcrm.run --inbox
       - name: Logic checks
         working-directory: importer

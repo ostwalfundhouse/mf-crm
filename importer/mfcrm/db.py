@@ -47,8 +47,22 @@ class SupabaseDB:
             self.s.headers["Authorization"] = f"Bearer {key}"
 
     def rpc(self, name, **params):
+        if name == "transactions_for_keys":
+            return self._rpc_rows(name, params)
         r = self.s.post(f"{self.url}/rest/v1/rpc/{name}", json=params, timeout=300)
         return _json(r, name)
+
+    def _rpc_rows(self, name, params, page=1000):
+        """Functions that return rows: Supabase sends at most 1000 per request, so page."""
+        out, offset = [], 0
+        while True:
+            r = self.s.post(f"{self.url}/rest/v1/rpc/{name}?limit={page}&offset={offset}",
+                            json=params, timeout=300)
+            rows = _json(r, name)
+            out.extend(rows)
+            if len(rows) < page:
+                return out
+            offset += page
 
     def select(self, table, query="select=*"):
         out, start, page = [], 0, 1000
