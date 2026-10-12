@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ostwal Fund House CRM</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,500;6..72,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%23143f42'/><text x='16' y='22' font-size='15' text-anchor='middle' fill='white' font-family='Georgia'>O</text></svg>">
+</head>
+<body>
+  <div id="signin" class="signin" hidden>
+    <form id="signin-form" class="signin-card">
+      <h1>Ostwal Fund House</h1>
+      <p class="muted">Client records for ARN-283370, ARN-172637 and ARN-13732.</p>
+      <label for="email">Your email</label>
+      <input id="email" type="email" autocomplete="email" required>
+      <button type="submit">Email me a sign-in link</button>
+      <p id="signin-msg" class="muted" role="status"></p>
+    </form>
+  </div>
+
+  <div id="app" class="shell" hidden>
+    <nav class="side" aria-label="Main">
+      <div class="brand">Ostwal<span>Fund House</span></div>
+      <a href="#/" data-nav="home">Overview</a>
+      <a href="#/clients" data-nav="clients">Clients</a>
+      <a href="#/arn-map" data-nav="arn-map">ARN map</a>
+      <a href="#/follow-up" data-nav="follow-up">Missing details</a>
+      <a href="#/uploads" data-nav="uploads">Upload files</a>
+      <div class="side-foot">
+        <span id="who" class="muted"></span>
+        <button id="signout" class="link">Sign out</button>
+      </div>
+    </nav>
+    <main id="view" tabindex="-1"></main>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
