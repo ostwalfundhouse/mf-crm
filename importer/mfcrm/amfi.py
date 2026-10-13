@@ -49,6 +49,8 @@ def norm(text):
     t = re.sub(r"off[\s-]*shore", "offshore", t)
     t = re.sub(r"mid[\s-]*cap", "midcap", t)
     t = re.sub(r"\bfund of funds?\b", "fof", t)
+    t = re.sub(r"\bquaterly\b", "quarterly", t)
+    t = re.sub(r"\bhalf yearly\b", "halfyearly", t)
     t = re.sub(r"[^a-z0-9 ]", " ", t)
     return re.sub(r"\s+", " ", t).strip()
 
@@ -118,17 +120,56 @@ def parse_navall(text):
         name = get("schemename")
         isin1, isin2 = get("isindivpayoutisingrowth"), get("isindivreinvestment")
         plan_col, opt_col = get("plan"), get("option")
+        if not plan_col and re.search(r"\bdirect\b|\bregular\b", norm(opt_col)):
+            plan_col = opt_col                      # e.g. Option "Direct Growth"
+        named_plan = re.search(r"\bdirect\b|\bregular\b", norm(name))
         plan = ("direct" if "direct" in plan_col.lower() else "regular") if plan_col else plan_of(name)
+        reinvest = isin2 not in ("", "-")
         explicit = bool(opt_col) or bool(re.search(r"\bgrowth\b|\bidcw\b|\bdividend\b|\bbonus\b", norm(name)))
         if opt_col:
             o = opt_col.lower()
-            option = "growth" if "growth" in o else "bonus" if "bonus" in o else "idcw"
-        else:
+            option = "growth" if "growth" in o or "cumulative" in o else "bonus" if "bonus" in o else "idcw"
+        elif explicit:
             option = option_of(name)
+        else:
+            # No option given: a scheme with a reinvestment ISIN pays IDCW; otherwise growth.
+            option = "idcw" if reinvest else "growth"
+        freq = {w for w in norm(opt_col).split()
+                if w in ("monthly", "quarterly", "weekly", "daily", "annual", "halfyearly",
+                         "fortnightly", "periodic", "flexi")}
         out.append({"code": parts[c.get("schemecode", 0)], "isin": isin1 if isin1 not in ("", "-") else isin2,
                     "name": name, "nav": navf, "date": iso, "house": house,
-                    "plan": plan, "option": option, "explicit": explicit, "tokens": tokens(name)})
-    return out
+                    "plan": plan, "option": option, "explicit": explicit, "tokens": tokens(name) | freq,
+                    "plan_unknown": not plan_col and not named_plan})
+    return resolve_plans(drop_stale(out))
+
+
+def drop_stale(schemes, days=60):
+    """Leave out schemes whose last NAV is far older than the file (wound-up plans)."""
+    import datetime as dt
+    if not schemes:
+        return schemes
+    newest = max(dt.date.fromisoformat(s["date"]) for s in schemes)
+    return [s for s in schemes if (newest - dt.date.fromisoformat(s["date"])).days <= days]
+
+
+def resolve_plans(schemes):
+    """Many AMFI rows leave Plan blank and the name does not say Regular or Direct.
+    For such a scheme with exactly two versions of the same option, the one with the
+    lower NAV is Regular (its expenses are higher) and the other Direct. A single
+    version is taken as is; three or more stay undecided and are not matched."""
+    groups = {}
+    for s in schemes:
+        if s["plan_unknown"]:
+            groups.setdefault((s["house"], norm(s["name"]), s["option"]), []).append(s)
+    for g in groups.values():
+        if len(g) == 2:
+            lo, hi = sorted(g, key=lambda x: x["nav"])
+            lo["plan"], hi["plan"] = "regular", "direct"
+        elif len(g) > 2:
+            for s in g:
+                s["plan"] = "unknown"
+    return schemes
 
 
 def ranked(product, schemes, hint=None):
