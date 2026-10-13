@@ -76,6 +76,7 @@ def tokens(name):
     n = name or ""
     n = re.sub(r"(?i)fund(regular|direct)", r"fund \1", n)             # "FundRegular"
     n = re.sub(r"(?i)\(?\s*(formerly|erstwhile)\b.*$", "", n)           # old names
+    n = re.sub(r"(?i)\([^)]*80\s*c[^)]*\)", " ", n)                       # "(ELSS U/S 80C of IT Act)"
     return {w for w in norm(n).split() if w not in STOP and not re.fullmatch(r"\d+", w)}
 
 
@@ -162,9 +163,10 @@ def best_match(product, schemes):
         return None, 0.0, []
     top_score, top = r[0]
     cands = [f"{x['name']} [{x['code']}] {sc:.2f}" for sc, x in r[:3]]
-    if (len(r) > 1 and r[1][0] == top_score and r[1][1]["code"] != top["code"]
-            and r[1][1].get("explicit", True) == top.get("explicit", True)):
-        return None, top_score, cands     # two schemes fit equally well: leave for review
+    tied = [x for sc, x in r if sc == top_score and x.get("explicit", True) == top.get("explicit", True)]
+    if len({round(x["nav"], 4) for x in tied}) > 1:
+        return None, top_score, cands     # equal fits with different NAVs: leave for review
+    # (equal fits with the same NAV, such as IDCW payout and reinvestment, are safe to use)
     return top, top_score, cands
 
 
