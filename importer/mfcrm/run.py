@@ -62,10 +62,7 @@ class Importer:
 
     def import_bytes(self, name, data):
         """Import one file. Returns a summary dict for the log."""
-        if is_zip(data) and not name.lower().endswith((".xlsx", ".xlsm")):
-            inner = unzip(data, self.password)
-        else:
-            inner = [(name, data)]
+        inner = self._expand(name, data)
 
         summary = {"report_type": [], "rows_read": 0, "inserted": 0, "updated": 0,
                    "skipped": 0, "warnings": []}
@@ -104,6 +101,16 @@ class Importer:
                 for k in ("inserted", "updated", "skipped"):
                     summary[k] += totals.get(k, 0)
         return summary
+
+    def _expand(self, name, data, depth=0):
+        """The files inside a zip, opening zips within zips (such as a folder
+        downloaded from Google Drive that holds the registrars' zip files)."""
+        if not is_zip(data) or name.lower().endswith((".xlsx", ".xlsm")) or depth > 3:
+            return [(name, data)]
+        out = []
+        for inner_name, content in unzip(data, self.password):
+            out += self._expand(inner_name, content, depth + 1)
+        return out
 
     def _folios(self, rows, totals):
         for b in _batches(R.jsonable(rows)):

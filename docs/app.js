@@ -462,11 +462,14 @@
     async function send(files) {
       const out = $("#up");
       for (const f of files) {
-        const safe = new Date().toISOString().slice(0, 10) + "_manual_" + f.name.replace(/[^A-Za-z0-9._-]/g, "_");
+        // Date plus a short random part, so files with the same name (for example
+        // "2020 to 2025.zip" from both CAMS and KFintech) never replace each other.
+        const tag = Math.random().toString(36).slice(2, 7);
+        const safe = new Date().toISOString().slice(0, 10) + "_manual_" + tag + "_" + f.name.replace(/[^A-Za-z0-9._-]/g, "_");
         const line = document.createElement("p");
         line.textContent = "Uploading " + f.name + "…";
         out.appendChild(line);
-        const { error } = await sb.storage.from("inbox").upload("incoming/" + safe, f, { upsert: true });
+        const { error } = await sb.storage.from("inbox").upload("incoming/" + safe, f, { upsert: false });
         line.textContent = error ? `${f.name}: not uploaded (${error.message})` : `${f.name}: uploaded. It will be imported on the next run.`;
         line.className = error ? "loss" : "gain";
       }
