@@ -65,6 +65,8 @@ class SupabaseDB:
             offset += page
 
     def select(self, table, query="select=*"):
+        # Read in pages of 1000. The query must include an order= on columns that
+        # identify each row, or pages can overlap and rows be read twice or missed.
         out, start, page = [], 0, 1000
         while True:
             r = self.s.get(f"{self.url}/rest/v1/{table}?{query}",

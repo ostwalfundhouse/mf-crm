@@ -242,8 +242,8 @@ def download():
 def run(db, text=None):
     schemes = parse_navall(text or download())
     by_code = {s["code"]: s for s in schemes}
-    products = db.select("nav_products", "select=*")
-    manual = {(m["registrar"], m["product_code"]): m for m in db.select("scheme_map", "select=*")
+    products = db.select("nav_products", "select=*&order=registrar,product_code")
+    manual = {(m["registrar"], m["product_code"]): m for m in db.select("scheme_map", "select=*&order=registrar,product_code")
               if m.get("method") == "manual"}
     maps, navs, unmatched = [], [], 0
     for p in products:

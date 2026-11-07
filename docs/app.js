@@ -38,7 +38,9 @@
 
   /* ---------- data helpers ---------- */
   async function all(query, page = 1000) {
-    // Fetch every row of a query in pages.
+    // Fetch every row of a query in pages. Every query passed here must be sorted
+    // on columns that identify each row exactly; otherwise pages can overlap and
+    // rows get counted twice (or missed).
     let out = [], from = 0;
     for (;;) {
       const { data, error } = await query().range(from, from + page - 1);
@@ -74,7 +76,8 @@
   async function home() {
     view.innerHTML = `<h1 class="page">Overview</h1><p class="sub">Loading…</p>`;
     const [hv, clientCount, recent, imports] = await Promise.all([
-      all(() => sb.from("holding_values").select("arn,registrar,amc_code,scheme_name,units,cost_value,market_value").gt("units", 0.001)),
+      all(() => sb.from("holding_values").select("arn,registrar,amc_code,scheme_name,units,cost_value,market_value").gt("units", 0.001)
+        .order("registrar").order("folio_no").order("product_code")),
       sb.from("clients").select("pan", { count: "exact", head: true }).gt("active_holdings", 0),
       sb.from("transactions_full").select("trxn_date,inv_name,scheme_name,trxn_type,trxn_desc,amount,sign,arn,pan,folio_no,registrar")
         .neq("sign", 0).order("trxn_date", { ascending: false }).limit(15),
@@ -207,8 +210,9 @@
     const folioNos = [...new Set(fs.map((f) => f.folio_no))];
     const [txns, hist] = await Promise.all([
       all(() => sb.from("transactions_full").select("registrar,folio_no,product_code,scheme_name,trxn_date,trxn_type,trxn_desc,units,amount,price,sign,arn,is_reversal")
-        .in("folio_no", folioNos).order("trxn_date", { ascending: false })),
-      all(() => sb.from("arn_history").select("*").in("folio_no", folioNos)),
+        .in("folio_no", folioNos).order("trxn_date", { ascending: false }).order("id", { ascending: false })),
+      all(() => sb.from("arn_history").select("*").in("folio_no", folioNos)
+        .order("registrar").order("folio_no").order("product_code").order("year").order("arn")),
     ]);
     const holdings = (hv.data || []).sort((a, b) => (b.market_value || 0) - (a.market_value || 0));
     const active = holdings.filter((h) => h.units > 0.001);
@@ -435,7 +439,8 @@
       <div class="toolbar">${Object.entries(cols).map(([k, v]) => `<a href="#/follow-up?only=${k}" ${only === k ? 'aria-current="page"' : ""}>${v}</a>`).join(" · ")} · <a href="#/follow-up">All</a></div>
       <div id="list"><p class="muted">Loading…</p></div>`;
     const rows = await all(() => {
-      let q = sb.from("missing_details").select("*").order("inv_name");
+      let q = sb.from("missing_details").select("*").order("inv_name")
+        .order("registrar").order("folio_no").order("product_code");
       return only ? q.eq(only, true) : q;
     });
     $("#list").innerHTML = table([
