@@ -60,7 +60,7 @@ def plan_of(name):
 
 
 def option_of(name, divopt=None):
-    n = norm(name)
+    n = re.sub(r"\bdividend yield\b", "dividendyield", norm(name))   # a fund name, not the option
     if divopt:
         d = divopt.strip().upper()
         if d.startswith("G"):
@@ -125,7 +125,8 @@ def parse_navall(text):
         named_plan = re.search(r"\bdirect\b|\bregular\b", norm(name))
         plan = ("direct" if "direct" in plan_col.lower() else "regular") if plan_col else plan_of(name)
         reinvest = isin2 not in ("", "-")
-        explicit = bool(opt_col) or bool(re.search(r"\bgrowth\b|\bidcw\b|\bdividend\b|\bbonus\b", norm(name)))
+        bare = re.sub(r"\bdividend yield\b", "dividendyield", norm(name))
+        explicit = bool(opt_col) or bool(re.search(r"\bgrowth\b|\bidcw\b|\bdividend\b|\bbonus\b", bare))
         if opt_col:
             o = opt_col.lower()
             option = "growth" if "growth" in o or "cumulative" in o else "bonus" if "bonus" in o else "idcw"
