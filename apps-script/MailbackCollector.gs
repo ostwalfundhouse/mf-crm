@@ -46,7 +46,29 @@ function onOpen() {
 }
 
 function collectNow() { collect_(CONFIG.DAILY_LOOKBACK_DAYS); }
-function backfill()   { collect_(CONFIG.BACKFILL_DAYS); }
+
+// A backfill takes longer than Google's 6-minute limit for one run, so when time
+// runs out it schedules itself to carry on a minute later, until it is finished.
+function backfill() {
+  clearContinue_();
+  continueBackfill();
+}
+
+function continueBackfill() {
+  clearContinue_();
+  const finished = collect_(CONFIG.BACKFILL_DAYS);
+  if (!finished) {
+    ScriptApp.newTrigger('continueBackfill').timeBased().after(60 * 1000).create();
+  } else {
+    SpreadsheetApp.getActive().toast('Backfill finished.', 'Mailback', 10);
+  }
+}
+
+function clearContinue_() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'continueBackfill') ScriptApp.deleteTrigger(t);
+  });
+}
 
 function turnOnDailyRun() {
   turnOffDailyRun();
@@ -103,8 +125,10 @@ function collect_(days) {
   }
 
   if (outOfTime) {
-    SpreadsheetApp.getActive().toast('Time limit reached. Run again to continue.');
+    SpreadsheetApp.getActive().toast('Time limit reached; continuing in about a minute.',
+        'Mailback', 10);
   }
+  return !outOfTime;
 }
 
 /* ---------- CAMS: zip attached to the mail ---------- */
@@ -143,9 +167,18 @@ function handleKfintech_(msg, root) {
     return logRow_('KFintech', report, arn, msg, '', '', status);
   }
 
-  const url = link[1].replace(/&amp;/g, '&');
-  const resp = UrlFetchApp.fetch(url, { followRedirects: true, muteHttpExceptions: true });
-  const type = String(resp.getHeaders()['Content-Type'] || '').toLowerCase();
+  const url = unwrapKfinLink_(link[1].replace(/&amp;/g, '&'));
+  let resp = UrlFetchApp.fetch(url, { followRedirects: true, muteHttpExceptions: true });
+  let type = String(resp.getHeaders()['Content-Type'] || '').toLowerCase();
+  if (resp.getResponseCode() === 200 && type.indexOf('text/html') > -1) {
+    // Some pages only point on to the file: follow a report link found in the page.
+    const inner = resp.getContentText().match(/https?:\/\/[^"'<>\s]*kfintech\.com\/mfs\/[^"'<>\s]+/i);
+    if (inner) {
+      resp = UrlFetchApp.fetch(inner[0].replace(/&amp;/g, '&'),
+          { followRedirects: true, muteHttpExceptions: true });
+      type = String(resp.getHeaders()['Content-Type'] || '').toLowerCase();
+    }
+  }
   if (resp.getResponseCode() !== 200 || type.indexOf('text/html') > -1) {
     return logRow_('KFintech', report, arn, msg, '', '',
         'FAILED: link gave no file (HTTP ' + resp.getResponseCode() + ')');
@@ -165,6 +198,20 @@ function handleKfintech_(msg, root) {
 }
 
 /* ---------- Helpers ---------- */
+
+// Since November 2026 KFintech wraps the "Click Here" link in a click-tracking
+// address (scdelivery.kfintech.com/c/?u=...). The real link is in u, with every
+// character moved one place along (https -> iuuqt). Undo that.
+function unwrapKfinLink_(url) {
+  const m = url.match(/scdelivery\.kfintech\.com\/c\/?\?(?:[^#]*&)?u=([^&#]+)/i);
+  if (!m) return url;
+  const scrambled = decodeURIComponent(m[1]);
+  let real = '';
+  for (let i = 0; i < scrambled.length; i++) {
+    real += String.fromCharCode(scrambled.charCodeAt(i) - 1);
+  }
+  return /^https?:\/\//i.test(real) ? real : url;
+}
 
 function accountFromRecipient_(msg) {
   const to = msg.getTo().toLowerCase();
