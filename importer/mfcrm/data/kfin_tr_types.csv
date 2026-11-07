@@ -120,3 +120,10 @@ UPLOD,Unpledging rejection,N,R,R
 CNOR,Consolidation Out Rejection,R,P,P
 CNIR,Consolidation IN Rejection,R,R,R
 RFD,Refund (non-commercial),N,,D
+TMI,Transmission In (no units),N,,D
+TMO,Transmission Out (no units),N,,D
+TRMIR,Transmission In reversal,R,R,R
+TRMOR,Transmission Out reversal,R,P,P
+TRG,Transfer received,N,P,P
+CLM,Claim (no units),N,,D
+RFDR,Refund reversal (no units),R,,D
