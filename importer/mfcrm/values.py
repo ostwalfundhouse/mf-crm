@@ -85,6 +85,7 @@ def arn(v):
     s = code(v)
     if not s:
         return ""
-    if re.match(r"^\d+$", s):
-        return f"ARN-{s}"
+    m = re.match(r"^(?:ARN)?[\s_-]*0*(\d+)$", s, re.I)   # "13732", "ARN13732", "ARN-013732"
+    if m:
+        return f"ARN-{m.group(1)}"
     return s
