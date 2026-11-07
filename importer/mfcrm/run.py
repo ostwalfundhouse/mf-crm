@@ -190,8 +190,8 @@ def main(argv=None):
                 process(imp, os.path.basename(f), fh.read())
 
     if args.recompute_all or os.environ.get("RECOMPUTE_ALL") == "true":
-        for row in db.select("transactions", "select=registrar,folio_no,product_code&order=id"):
-            imp.touched.add(f"{row['registrar']}|{row['folio_no']}|{row['product_code']}")
+        for key in db.rpc("txn_keys"):
+            imp.touched.add(key if isinstance(key, str) else next(iter(key.values())))
 
     if imp.touched:
         n = imp.recompute_holdings()

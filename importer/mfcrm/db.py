@@ -47,7 +47,7 @@ class SupabaseDB:
             self.s.headers["Authorization"] = f"Bearer {key}"
 
     def rpc(self, name, **params):
-        if name == "transactions_for_keys":
+        if name in ("transactions_for_keys", "txn_keys"):
             return self._rpc_rows(name, params)
         r = self.s.post(f"{self.url}/rest/v1/rpc/{name}", json=params, timeout=300)
         return _json(r, name)
@@ -130,6 +130,8 @@ class PsqlDB:
         return path
 
     def rpc(self, name, **params):
+        if name == "txn_keys":
+            return json.loads(self._sql("select coalesce(json_agg(k), '[]') from txn_keys() k"))
         if name == "transactions_for_keys":
             path = self._json_file(params["keys"])
             try:

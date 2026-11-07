@@ -656,3 +656,17 @@ begin
     grant execute on function upsert_scheme_map(jsonb) to service_role;
   end if;
 end $$;
+
+-- Every folio-scheme that has transactions (for "recalculate every holding").
+create or replace function txn_keys() returns setof text
+language sql stable security definer set search_path = public as $$
+  select distinct registrar || '|' || folio_no || '|' || product_code as k
+  from transactions order by 1;
+$$;
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'anon') then
+    revoke all on function txn_keys() from public, anon, authenticated;
+    grant execute on function txn_keys() to service_role;
+  end if;
+end $$;
