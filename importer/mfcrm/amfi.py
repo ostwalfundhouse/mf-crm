@@ -134,9 +134,12 @@ def parse_navall(text):
         else:
             # No option given: a scheme with a reinvestment ISIN pays IDCW; otherwise growth.
             option = "idcw" if reinvest else "growth"
+        # Words in the Option column that make it a different version of the scheme:
+        # IDCW frequency, and plan classes such as Institutional or Discontinued.
         freq = {w for w in norm(opt_col).split()
                 if w in ("monthly", "quarterly", "weekly", "daily", "annual", "halfyearly",
-                         "fortnightly", "periodic", "flexi")}
+                         "fortnightly", "periodic", "flexi", "discontinued", "institutional",
+                         "super", "premium", "retail", "principal")}
         out.append({"code": parts[c.get("schemecode", 0)], "isin": isin1 if isin1 not in ("", "-") else isin2,
                     "name": name, "nav": navf, "date": iso, "house": house,
                     "plan": plan, "option": option, "explicit": explicit, "tokens": tokens(name) | freq,
