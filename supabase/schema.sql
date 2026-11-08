@@ -449,8 +449,12 @@ $$;
 -- so the importer can recalculate holdings for just those folios.
 create or replace function transactions_for_keys(keys text[]) returns setof transactions
 language sql stable security definer set search_path = public as $$
-  select t.* from transactions t
-  where (t.registrar || '|' || t.folio_no || '|' || t.product_code) = any (keys)
+  -- Keys are "registrar|folio|product"; joined column by column so the folio index is used.
+  select t.* from (
+    select split_part(k, '|', 1) as registrar, split_part(k, '|', 2) as folio_no,
+           substr(k, length(split_part(k, '|', 1)) + length(split_part(k, '|', 2)) + 3) as product_code
+    from unnest(keys) as k) w
+  join transactions t on t.registrar = w.registrar and t.folio_no = w.folio_no and t.product_code = w.product_code
   order by t.registrar, t.folio_no, t.product_code, t.trxn_date, t.post_date nulls last, t.id;
 $$;
 
