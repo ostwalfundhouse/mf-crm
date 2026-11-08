@@ -217,7 +217,10 @@
     const otherPerson = (n) => {
       if (!n || sameName(n)) return false;
       const ow = words(ownerName), b = bare(ownerName), nb = bare(n);
-      return !words(n).some((w) => ow.includes(w) || b.includes(w)) && !b.includes(nb) && !nb.includes(b);
+      // Same person if any word matches, or starts like one of the owner's words
+      // (spelling varies between registrars: Horkeri / Horakeri, Hemalatha / Hemalata).
+      const like = (w) => ow.some((o) => o === w || o.slice(0, 3) === w.slice(0, 3)) || b.includes(w);
+      return !words(n).some(like) && !b.includes(nb) && !nb.includes(b);
     };
     const own = fs.filter((f) => sameName(f.inv_name));
     const byDate = (a, b) => String(b.report_date).localeCompare(String(a.report_date));
