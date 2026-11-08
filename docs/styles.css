@@ -135,3 +135,6 @@ th.num { text-align: right; }
 .status-done { color: var(--gain); }
 .status-failed, .status-unrecognised { color: var(--loss); }
 @media (prefers-reduced-motion: no-preference) { .fill { transition: width .4s ease; } }
+
+.warn{background:#fff4e0;border:1px solid #f0c674;border-radius:8px;padding:10px 14px;color:#5c4100}
+@media (prefers-color-scheme:dark){.warn{background:#3a2d12;border-color:#7a5b1d;color:#f3dca8}}

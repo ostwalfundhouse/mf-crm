@@ -194,11 +194,12 @@
 
   async function client(pan) {
     view.innerHTML = `<p class="muted">Loading…</p>`;
-    const [folios, hv, notes, fam] = await Promise.all([
+    const [folios, hv, notes, fam, cl] = await Promise.all([
       sb.from("folios").select("*").eq("pan", pan),
       sb.from("holding_values").select("*").eq("pan", pan),
       sb.from("client_notes").select("*").eq("pan", pan).order("created_at", { ascending: false }),
       sb.from("family_members").select("family_id, families(name)").eq("pan", pan).maybeSingle(),
+      sb.from("clients").select("inv_name").eq("pan", pan).maybeSingle(),
     ]);
     if (folios.error) return fail(folios.error);
     const fs = folios.data || [];
@@ -206,7 +207,30 @@
       view.innerHTML = `<h1 class="page">${esc(pan)}</h1><p class="sub">No folios with this PAN.</p>`;
       return;
     }
-    const latest = [...fs].sort((a, b) => String(b.report_date).localeCompare(String(a.report_date)))[0];
+    // The PAN owner's name (chosen by the clients view). Registrars sometimes record one
+    // person's PAN on folios held in another name: details come from the owner's own
+    // folios, and folios in clearly different names are pointed out.
+    const ownerName = (cl.data && cl.data.inv_name) || fs[0].inv_name || "";
+    const bare = (n) => String(n || "").toUpperCase().replace(/[^A-Z]/g, "");
+    const words = (n) => String(n || "").toUpperCase().split(/[^A-Z]+/).filter((w) => w.length >= 3);
+    const sameName = (n) => bare(n) === bare(ownerName);
+    const otherPerson = (n) => {
+      if (!n || sameName(n)) return false;
+      const ow = words(ownerName), b = bare(ownerName), nb = bare(n);
+      return !words(n).some((w) => ow.includes(w) || b.includes(w)) && !b.includes(nb) && !nb.includes(b);
+    };
+    const own = fs.filter((f) => sameName(f.inv_name));
+    const byDate = (a, b) => String(b.report_date).localeCompare(String(a.report_date));
+    const latest = [...(own.length ? own : fs)].sort(byDate)[0];
+    const others = {};
+    fs.filter((f) => otherPerson(f.inv_name)).forEach((f) => {
+      const k = f.inv_name.trim();
+      (others[k] = others[k] || new Set()).add(f.folio_no);
+    });
+    const otherNote = Object.keys(others).length
+      ? `<p class="warn">CAMS/KFintech also record this PAN on folios held in other names: ${Object.entries(others)
+          .map(([n, set]) => `<b>${esc(n)}</b> (folio ${[...set].map(esc).join(", ")})`).join("; ")}. Their holdings are counted here. Please ask the registrar to correct the PAN on those folios.</p>`
+      : "";
     const folioNos = [...new Set(fs.map((f) => f.folio_no))];
     const [txns, hist] = await Promise.all([
       all(() => sb.from("transactions_full").select("registrar,folio_no,product_code,scheme_name,trxn_date,trxn_type,trxn_desc,units,amount,price,sign,arn,is_reversal")
@@ -225,7 +249,7 @@
     const famName = fam.data && fam.data.families ? fam.data.families.name : null;
 
     view.innerHTML = `
-      <h1 class="page">${esc(latest.inv_name)}</h1>
+      <h1 class="page">${esc(ownerName)}</h1>
       <p class="sub">${esc(pan)} · ${esc(latest.city || "")} ${famName ? `· Family: <a href="#/family/${fam.data.family_id}">${esc(famName)}</a>` : ""}</p>
       <div class="money">
         <div><div class="v">${rs(mv)}</div><div class="l">Market value</div></div>
@@ -233,6 +257,7 @@
         <div><div class="v ${cls(mv - cv)}">${rs(mv - cv)}</div><div class="l">Gain (${pct(mv - cv, cv)})</div></div>
         <div><div class="v">${active.length}</div><div class="l">Active holdings</div></div>
       </div>
+      ${otherNote}
       ${valuedH.length < active.length ? `<p class="muted">${active.length - valuedH.length} holdings have no NAV yet; their value and gain show once a NAV file is imported.</p>` : ""}
       <h2>Details</h2>
       <dl class="facts">
@@ -246,7 +271,8 @@
       <h2>Holdings</h2>
       ${table([
         { h: "Scheme", f: (h) => esc(h.scheme_name || h.product_code) },
-        { h: "Folio", f: (h) => esc(h.folio_no) + ` <span class="muted">${regName(h.registrar)}</span>` },
+        { h: "Folio", f: (h) => esc(h.folio_no) + ` <span class="muted">${regName(h.registrar)}</span>`
+            + (h.inv_name && !sameName(h.inv_name) ? `<br><small class="muted">${esc(h.inv_name)}</small>` : "") },
         { h: "ARN", f: (h) => arnTag(h.arn) },
         { h: "Units", num: 1, f: (h) => u3.format(h.units) },
         { h: "NAV", num: 1, f: (h) => (h.nav ? inr2.format(h.nav) + ` <span class="muted">${dmy(h.nav_date)}</span>` : "–") },

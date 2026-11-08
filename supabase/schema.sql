@@ -246,12 +246,33 @@ left join latest_navs n using (registrar, product_code);
 
 -- One row per client (PAN). Contact details come from the most recently
 -- reported folio.
+-- For a person's PAN (4th letter P) the 5th letter is the surname's initial.
+-- True when some word of the holder's name starts with it (or when it can't be checked).
+create or replace function pan_name_ok(p text, name text) returns boolean
+language sql immutable as $$
+  select case
+    when p is null or name is null or p !~ '^[A-Z]{3}P[A-Z]' then true
+    else exists (select 1 from regexp_split_to_table(upper(name), '[^A-Z]+') w
+                 where w <> '' and left(w, 1) = substr(p, 5, 1))
+  end;
+$$;
+
 create or replace view clients as
-with ranked as (
-  select f.*, row_number() over (partition by pan order by report_date desc nulls last,
-                                  updated_at desc) as rn
+-- The client's name and details come from one folio of the PAN: preferably one whose
+-- holder name fits the PAN (surname initial), then the name used on most folios, then
+-- the latest report. Registrars sometimes record one person's PAN on folios held in
+-- another name; that name must not become the client's name.
+with names as (
+  select pan, regexp_replace(upper(coalesce(inv_name, '')), '[^A-Z]', '', 'g') as nm, count(*) as c
+  from folios where pan is not null and pan <> '' group by 1, 2
+),
+ranked as (
+  select f.*, row_number() over (partition by f.pan
+           order by pan_name_ok(f.pan, f.inv_name) desc, n.c desc,
+                    f.report_date desc nulls last, f.updated_at desc) as rn
   from folios f
-  where pan is not null and pan <> ''
+  join names n on n.pan = f.pan and n.nm = regexp_replace(upper(coalesce(f.inv_name, '')), '[^A-Z]', '', 'g')
+  where f.pan is not null and f.pan <> ''
 ),
 money as (
   select pan, sum(market_value) as market_value, sum(cost_value) as cost_value,
