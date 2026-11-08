@@ -576,9 +576,17 @@ select coalesce(h.registrar, f.registrar) as registrar,
        h.units as units_from_transactions,
        f.units_reported,
        round(coalesce(h.units, 0) - coalesce(f.units_reported, 0), 3) as difference,
-       f.report_date, h.last_txn_date
+       f.report_date, h.last_txn_date,
+       -- Like-for-like: the registrar's units are a snapshot taken at the start of
+       -- report_date, so compare with transactions dated before that day only.
+       a.units as units_before_report_date,
+       round(coalesce(a.units, 0) - coalesce(f.units_reported, 0), 3) as difference_at_report_date
 from holdings h
 full join folios f using (registrar, folio_no, product_code)
+left join lateral (
+  select sum(t.signed_units) as units from transactions t
+  where t.registrar = f.registrar and t.folio_no = f.folio_no and t.product_code = f.product_code
+    and t.trxn_date < f.report_date) a on true
 where f.units_reported is not null;
 alter view reconciliation set (security_invoker = true);
 alter view transactions_full set (security_invoker = true);

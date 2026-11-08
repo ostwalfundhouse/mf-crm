@@ -240,7 +240,7 @@ def cams_sign_from_type(trxn_type, units):
     if not units:
         return 0
     t = (trxn_type or "").upper()
-    if t.startswith(("SI", "TI")):
+    if t.startswith(("SI", "TI", "DR")):     # DR = IDCW reinvested as new units
         return 1
     if t.startswith(("SO", "TO")):
         return -1
